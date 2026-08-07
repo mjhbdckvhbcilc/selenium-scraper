@@ -1,0 +1,65 @@
+name: OpenCode AI Autonomous Improvement
+
+on:
+  push:
+    branches:
+      - '**'
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  ai-improve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      OLLAMA_MODEL: ${{ vars.OLLAMA_MODEL || 'qwen2.5:3b-instruct' }}
+      OLLAMA_HOST: http://127.0.0.1:11434
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install OpenCode CLI
+        run: |
+          npm install -g @opencode-ai/cli
+          lildax --version
+
+      - name: Install and start Ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          ollama serve > /tmp/ollama.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -s http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+          ollama pull "$OLLAMA_MODEL"
+
+      - name: Run AI repository analysis and improvement
+        run: |
+          python3 scripts/ai_auto_commit.py
+
+      - name: Commit and push changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: ai-assisted repository improvement"
+            git push
+          else
+            echo "No repository changes to commit."
+          fi

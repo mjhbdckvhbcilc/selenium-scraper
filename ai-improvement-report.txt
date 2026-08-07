@@ -1,0 +1,1 @@
+Applied a safe fallback improvement to the repository README.
