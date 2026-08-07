@@ -1,0 +1,135 @@
+name: Web Scraping Automation
+
+on:
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'URL to scrape'
+        required: false
+        default: ''
+      output_format:
+        description: 'Output format (json, csv, html)'
+        required: false
+        default: 'json'
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install selenium beautifulsoup4 requests pandas lxml
+
+      - name: Install ChromeDriver
+        uses: nanasess/setup-chromedriver@master
+        with:
+          chromedriver-version: '126.0.6478.126'
+
+      - name: Run web scraper
+        env:
+          SCRAPE_URL: ${{ github.event.inputs.url || 'https://example.com' }}
+          OUTPUT_FORMAT: ${{ github.event.inputs.output_format || 'json' }}
+        run: |
+          python scraper.py \
+            --url "$SCRAPE_URL" \
+            --format "$OUTPUT_FORMAT" \
+            --output "./data/scraped_data_$(date +%Y%m%d_%H%M%S)"
+
+      - name: Validate scraped data
+        run: |
+          python validate_data.py ./data
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: scraped-data
+          path: ./data/
+          retention-days: 30
+
+      - name: Commit and push results
+        if: always()
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add -A
+          git commit -m "chore: automated web scraping - $(date +%Y-%m-%d)" || echo "No changes to commit"
+          git push
+
+      - name: Send notification on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '❌ Web scraping job failed. Check the workflow logs for details.'
+            })
+
+  data-processing:
+    needs: scrape
+    runs-on: ubuntu-latest
+    if: success()
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install pandas matplotlib seaborn
+
+      - name: Process and analyze data
+        run: |
+          python process_data.py
+
+      - name: Generate reports
+        run: |
+          python generate_reports.py
+
+      - name: Upload analysis results
+        uses: actions/upload-artifact@v3
+        with:
+          name: analysis-reports
+          path: ./reports/
+          retention-days: 90
+
+  notify:
+    needs: [scrape, data-processing]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: Send success notification
+        if: success()
+        run: |
+          echo "✅ Web scraping and processing completed successfully!"
+
+      - name: Send failure notification
+        if: failure()
+        run: |
+          echo "❌ Web scraping workflow failed!"
